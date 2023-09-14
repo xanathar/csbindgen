@@ -214,7 +214,7 @@ impl RustType {
         method_name: &String,
         parameter_name: &String,
     ) -> String {
-        fn convert_type_name(type_name: &str) -> String {
+        fn convert_type_name(type_name: &str, use_nint_types: bool) -> String {
             let temp_string: String;
             let name = match type_name {
                 // rust primitives
@@ -223,7 +223,8 @@ impl RustType {
                 "i32" => "int",
                 "i64" => "long",
                 "i128" => "Int128", // .NET 7
-                "isize" => "nint",  // C# 9.0
+                "isize" if use_nint_types => "nint",  // C# 9.0
+                "isize" => "System.IntPtr",  // C# 9.0
                 "u8" => "byte",
                 "u16" => "ushort",
                 "u32" => "uint",
@@ -233,7 +234,8 @@ impl RustType {
                 "f64" => "double",
                 "bool" => "bool",
                 "char" => "uint",
-                "usize" => "nuint", // C# 9.0
+                "usize" if use_nint_types => "nuint", // C# 9.0
+                "usize" => "System.UIntPtr",
                 "()" => "void",
                 // std::os::raw https://doc.rust-lang.org/std/os/raw/index.html
                 // std::ffi::raw https://doc.rust-lang.org/core/ffi/index.html
@@ -258,13 +260,15 @@ impl RustType {
                 "NonZeroI32" => "int",
                 "NonZeroI64" => "long",
                 "NonZeroI128" => "Int128",
-                "NonZeroIsize" => "nint",
+                "NonZeroIsize" if use_nint_types => "nint",
+                "NonZeroIsize" => "System.IntPtr",
                 "NonZeroU8" => "byte",
                 "NonZeroU16" => "ushort",
                 "NonZeroU32" => "uint",
                 "NonZeroU64" => "ulong",
                 "NonZeroU128" => "UInt128",
-                "NonZeroUsize" => "nuint",                
+                "NonZeroUsize" if use_nint_types => "nuint",
+                "NonZeroUsize" => "System.UIntPtr",
                 _ => {
                     temp_string = escape_name(type_name);
                     temp_string.as_str()
@@ -289,7 +293,7 @@ impl RustType {
                 parameter_name,
             )
         } else {
-            convert_type_name(use_type.type_name.as_str()).to_string()
+            convert_type_name(use_type.type_name.as_str(), options.csharp_use_nint_types).to_string()
         };
 
         let mut sb = String::new();

@@ -1,7 +1,50 @@
+use std::collections::HashSet;
+
 use crate::{alias_map::AliasMap, builder::BindgenOptions};
 
-pub fn escape_name(str: &str) -> String {
-    match str {
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum NameKind {
+    Method,
+    Type,
+    Argument,
+    Const,
+    Field,
+    Delegate,
+    EnumMember,
+}
+
+fn csharp_convert_to_camel_or_pascal_case(name: &str, pascal_case: bool) -> String {
+    let mut converted = String::with_capacity(name.len());
+    let mut start_word = pascal_case;
+    let mut chars = name.chars();
+
+    while let Some(c) = chars.next() {
+        if c == '_' {
+            start_word = true;
+        } else if start_word && c.is_ascii_alphabetic() {
+            start_word = false;
+            converted.push(char::to_ascii_uppercase(&c));
+        } else {
+            start_word = false;
+            converted.push(c);
+        }
+    }
+
+    converted
+}
+
+pub fn escape_name_csharp(name: &str, kind: NameKind, options: &BindgenOptions) -> String {
+    let name = if options.csharp_use_dotnet_naming_convention {
+        match kind {
+            NameKind::Argument => csharp_convert_to_camel_or_pascal_case(name, false),
+            NameKind::Const => name.to_ascii_uppercase(),
+            _ => csharp_convert_to_camel_or_pascal_case(name, true),
+        }
+    } else {
+        name.to_string()
+    };
+
+    match name.as_str() {
         // C# keywords: https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/keywords/
         "abstract" | "as" | "base" | "bool" | "break" | "byte" | "case" | "catch" | "char"
         | "checked" | "class" | "const" | "continue" | "decimal" | "default" | "delegate"
@@ -12,8 +55,19 @@ pub fn escape_name(str: &str) -> String {
         | "protected" | "public" | "readonly" | "ref" | "return" | "sbyte" | "sealed" | "short"
         | "sizeof" | "stackalloc" | "static" | "string" | "struct" | "switch" | "this"
         | "throw" | "true" | "try" | "typeof" | "uint" | "ulong" | "unchecked" | "unsafe"
-        | "ushort" | "using" | "virtual" | "void" | "volatile" | "while" => "@".to_string() + str,
-        x => x.to_string(),
+        | "ushort" | "using" | "virtual" | "void" | "volatile" | "while" => format!("@{name}"),
+        _ => name,
+    }
+}
+
+pub fn escape_name_rust(name: &str) -> String {
+    match name {
+        // Rust keywords: https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/keywords/
+        "'static" | "abstract" | "as" | "async" | "await" | "become" | "box" | "break" | "const" | "continue" | "crate" | "do" | "dyn" | "else"
+        | "enum" | "extern" | "false" | "final" | "fn" | "for" | "if" | "impl" | "in" | "let" | "loop" | "macro" | "macro_rules" | "match"
+        | "mod" | "move" | "mut" | "override" | "priv" | "pub" | "ref" | "return" | "self" | "Self" | "static" | "struct" | "super" | "trait"
+        | "true" | "try" | "type" | "typeof" | "union" | "unsafe" | "unsized" | "use" | "virtual" | "where" | "while" | "yield" => format!("r#{name}"),
+        _ => name.to_string(),
     }
 }
 
@@ -183,7 +237,7 @@ impl RustType {
                     .map(|x| {
                         format!(
                             "{}: {}",
-                            escape_name(x.name.as_str()),
+                            escape_name_rust(x.name.as_str()),
                             x.rust_type.to_rust_string(type_path)
                         )
                     })
@@ -213,8 +267,9 @@ impl RustType {
         emit_from_struct: bool,
         method_name: &String,
         parameter_name: &String,
+        forward_decls: &mut HashSet<String>,
     ) -> String {
-        fn convert_type_name(type_name: &str, use_nint_types: bool) -> String {
+        fn convert_type_name(type_name: &str, options: &BindgenOptions) -> String {
             let temp_string: String;
             let name = match type_name {
                 // rust primitives
@@ -223,8 +278,8 @@ impl RustType {
                 "i32" => "int",
                 "i64" => "long",
                 "i128" => "Int128", // .NET 7
-                "isize" if use_nint_types => "nint",  // C# 9.0
-                "isize" => "System.IntPtr",  // C# 9.0
+                "isize" if options.csharp_use_nint_types => "nint",  // C# 9.0
+                "isize" => "System.IntPtr",
                 "u8" => "byte",
                 "u16" => "ushort",
                 "u32" => "uint",
@@ -234,7 +289,7 @@ impl RustType {
                 "f64" => "double",
                 "bool" => "bool",
                 "char" => "uint",
-                "usize" if use_nint_types => "nuint", // C# 9.0
+                "usize" if options.csharp_use_nint_types => "nuint", // C# 9.0
                 "usize" => "System.UIntPtr",
                 "()" => "void",
                 // std::os::raw https://doc.rust-lang.org/std/os/raw/index.html
@@ -260,17 +315,17 @@ impl RustType {
                 "NonZeroI32" => "int",
                 "NonZeroI64" => "long",
                 "NonZeroI128" => "Int128",
-                "NonZeroIsize" if use_nint_types => "nint",
+                "NonZeroIsize" if options.csharp_use_nint_types => "nint",
                 "NonZeroIsize" => "System.IntPtr",
                 "NonZeroU8" => "byte",
                 "NonZeroU16" => "ushort",
                 "NonZeroU32" => "uint",
                 "NonZeroU64" => "ulong",
                 "NonZeroU128" => "UInt128",
-                "NonZeroUsize" if use_nint_types => "nuint",
+                "NonZeroUsize" if options.csharp_use_nint_types => "nuint",
                 "NonZeroUsize" => "System.UIntPtr",
                 _ => {
-                    temp_string = escape_name(type_name);
+                    temp_string = escape_name_csharp(type_name, NameKind::Type, options);
                     temp_string.as_str()
                 }
             };
@@ -291,9 +346,10 @@ impl RustType {
                 emit_from_struct,
                 method_name,
                 parameter_name,
+                forward_decls,
             )
         } else {
-            convert_type_name(use_type.type_name.as_str(), options.csharp_use_nint_types).to_string()
+            convert_type_name(use_type.type_name.as_str(), options).to_string()
         };
 
         let mut sb = String::new();
@@ -330,6 +386,7 @@ impl RustType {
                             emit_from_struct,
                             method_name,
                             parameter_name,
+                            forward_decls,
                         ));
                         sb.push_str(", ");
                     }
@@ -341,6 +398,7 @@ impl RustType {
                                 emit_from_struct,
                                 method_name,
                                 parameter_name,
+                                forward_decls,
                             ));
                         }
                         None => {
@@ -349,7 +407,15 @@ impl RustType {
                     };
                     sb.push('>');
                 } else {
-                    sb.push_str(build_method_delegate_name(method_name, parameter_name).as_str());
+                    let delegate_name = build_method_delegate_name(method_name, parameter_name, options);
+
+                    sb.push_str(&delegate_name);
+
+                    let decl = build_method_delegate_if_required(self, options, alias_map, method_name, parameter_name, forward_decls);
+
+                    if let Some(decl) = decl {
+                        forward_decls.insert(format!("    unsafe {decl};"));
+                    }
                 }
             }
             TypeKind::Option(inner) => {
@@ -362,6 +428,7 @@ impl RustType {
                             emit_from_struct,
                             method_name,
                             parameter_name,
+                            forward_decls,
                         )
                         .as_str(),
                 );
@@ -376,6 +443,7 @@ impl RustType {
                     method_name: &String,
                     parameter_name: &String,
                     emit_inner: bool,
+                    forward_decls: &mut HashSet<String>,
                 ) -> bool {
                     use PointerType::*;
                     if let TypeKind::Pointer(p, inner) = &rust_type.type_kind {
@@ -388,6 +456,7 @@ impl RustType {
                                         emit_from_struct,
                                         method_name,
                                         parameter_name,
+                                        forward_decls,
                                     )
                                     .as_str(),
                             );
@@ -419,6 +488,7 @@ impl RustType {
                         method_name,
                         parameter_name,
                         emit_inner,
+                        forward_decls,
                     ) {
                         sb.push_str(type_csharp_string.as_str());
                     }
@@ -435,6 +505,7 @@ impl RustType {
                     method_name,
                     parameter_name,
                     emit_inner,
+                    forward_decls,
                 ) {
                     if emit_inner {
                         sb.push_str(type_csharp_string.as_str());
@@ -453,6 +524,7 @@ pub fn build_method_delegate_if_required(
     alias_map: &AliasMap,
     method_name: &String,
     parameter_name: &String,
+    forward_decls: &mut HashSet<String>,
 ) -> Option<String> {
     let emit_from_struct = false;
 
@@ -470,6 +542,7 @@ pub fn build_method_delegate_if_required(
                         emit_from_struct,
                         method_name,
                         parameter_name,
+                        forward_decls,
                     ),
                     None => "void".to_string(),
                 };
@@ -484,6 +557,7 @@ pub fn build_method_delegate_if_required(
                             emit_from_struct,
                             method_name,
                             parameter_name,
+                            forward_decls,
                         );
                         let parameter_name = if p.name == "" {
                             format!("arg{}", index + 1)
@@ -491,12 +565,12 @@ pub fn build_method_delegate_if_required(
                             p.name.clone()
                         };
 
-                        format!("{} {}", cs, escape_name(parameter_name.as_str()))
+                        format!("{} {}", cs, escape_name_csharp(parameter_name.as_str(), NameKind::Argument, &options))
                     })
                     .collect::<Vec<_>>()
                     .join(", ");
 
-                let delegate_name = build_method_delegate_name(method_name, parameter_name);
+                let delegate_name = build_method_delegate_name(method_name, parameter_name, options);
                 let delegate_code =
                     format!("delegate {return_type_name} {delegate_name}({joined_param})");
                 Some(delegate_code)
@@ -508,13 +582,14 @@ pub fn build_method_delegate_if_required(
             alias_map,
             method_name,
             parameter_name,
+            forward_decls,
         ),
         _ => None,
     }
 }
 
-pub fn build_method_delegate_name(method_name: &String, parameter_name: &String) -> String {
-    format!("{method_name}_{parameter_name}_delegate")
+pub fn build_method_delegate_name(method_name: &String, parameter_name: &String, options: &BindgenOptions) -> String {
+    escape_name_csharp(&format!("{method_name}_{parameter_name}_delegate"), NameKind::Delegate, options)
 }
 
 impl std::fmt::Display for RustType {

@@ -30,8 +30,10 @@ pub struct BindgenOptions {
     pub csharp_if_dll_name: String,
     pub csharp_use_function_pointer: bool,
     pub csharp_use_nint_types: bool,
+    pub csharp_use_dotnet_naming_convention: bool,
     pub csharp_imported_namespaces: Vec<String>,
     pub csharp_generate_const_filter: fn(const_name: &str) -> bool,
+    pub always_included_types: Vec<String>,
 }
 
 impl Default for Builder {
@@ -55,8 +57,10 @@ impl Default for Builder {
                 csharp_if_dll_name: "".to_string(),
                 csharp_use_function_pointer: true,
                 csharp_use_nint_types: true,
+                csharp_use_dotnet_naming_convention: false,
                 csharp_imported_namespaces: vec![],
                 csharp_generate_const_filter: |_| false,
+                always_included_types: vec![],
             },
         }
     }
@@ -87,7 +91,14 @@ impl Builder {
         self
     }
 
-
+    /// Adds a list of types that will always be considered to be included in the
+    /// generated bindings, even if not part of any function signature
+    pub fn always_included_types<I, S>(mut self, always_included_types: I) -> Builder
+    where I: IntoIterator<Item = S>, S: ToString
+    {
+        self.options.always_included_types.extend(always_included_types.into_iter().map(|v| v.to_string()));
+        self
+    }
 
     /// add original extern call type prefix to rust wrapper,
     /// `return {rust_method_type_path}::foo()`
@@ -191,6 +202,13 @@ impl Builder {
     /// (use `nint`/`nuint`)
     pub fn csharp_use_nint_types(mut self, csharp_use_nint_types: bool) -> Builder {
         self.options.csharp_use_nint_types = csharp_use_nint_types;
+        self
+    }
+
+    /// configure if to translate names to be compliant to .NET naming conventions (i.e. PascalCasing
+    /// for classes, namespaces, delegates, methods, and public fields, and UPPERCASE for consts)
+    pub fn csharp_use_dotnet_naming_convention(mut self, csharp_use_dotnet_naming_convention: bool) -> Builder {
+        self.options.csharp_use_dotnet_naming_convention = csharp_use_dotnet_naming_convention;
         self
     }
 

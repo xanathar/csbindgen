@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::alias_map::AliasMap;
 use crate::builder::BindgenOptions;
 use crate::type_meta::*;
@@ -87,6 +89,7 @@ pub fn emit_csharp(
     let class_name = &options.csharp_class_name;
     let method_prefix = &options.csharp_method_prefix;
     let accessibility = &options.csharp_class_accessibility;
+    let mut forward_decls: HashSet<String> = HashSet::new();
 
     let mut dll_name = match options.csharp_if_symbol.as_str() {
         "" => format!(
@@ -112,9 +115,10 @@ pub fn emit_csharp(
     let mut method_list_string = String::new();
     for item in methods {
         let mut method_name = &item.method_name;
+        let entrypoint_name = method_name.clone();
         let method_name_temp: String;
         if method_prefix.is_empty() {
-            method_name_temp = escape_name(method_name);
+            method_name_temp = escape_name_csharp(method_name, NameKind::Method, &options);
             method_name = &method_name_temp;
         }
 
@@ -125,6 +129,7 @@ pub fn emit_csharp(
                 aliases,
                 method_name,
                 &"return".to_string(),
+                &mut forward_decls,
             ) {
                 method_list_string.push_str(
                     format!("        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]\n")
@@ -142,6 +147,7 @@ pub fn emit_csharp(
                 aliases,
                 method_name,
                 &p.name,
+                &mut forward_decls,
             ) {
                 method_list_string.push_str(
                     format!("        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]\n")
@@ -153,12 +159,12 @@ pub fn emit_csharp(
         }
 
         let entry_point = match options.csharp_entry_point_prefix.as_str() {
-            "" => format!("{method_prefix}{method_name}"),
-            x => format!("{x}{method_name}"),
+            "" => format!("{method_prefix}{entrypoint_name}"),
+            x => format!("{x}{entrypoint_name}"),
         };
         let return_type = match &item.return_type {
             Some(x) => {
-                x.to_csharp_string(options, aliases, false, method_name, &"return".to_string())
+                x.to_csharp_string(options, aliases, false, method_name, &"return".to_string(), &mut forward_decls)
             }
             None => "void".to_string(),
         };
@@ -169,12 +175,12 @@ pub fn emit_csharp(
             .map(|p| {
                 let mut type_name =
                     p.rust_type
-                        .to_csharp_string(options, aliases, false, method_name, &p.name);
+                        .to_csharp_string(options, aliases, false, method_name, &p.name, &mut forward_decls);
                 if type_name == "bool" {
                     type_name = "[MarshalAs(UnmanagedType.U1)] bool".to_string();
                 }
 
-                format!("{} {}", type_name, escape_name(p.name.as_str()))
+                format!("{} {}", type_name, escape_name_csharp(p.name.as_str(), NameKind::Argument, &options))
             })
             .collect::<Vec<_>>()
             .join(", ");
@@ -198,7 +204,7 @@ pub fn emit_csharp(
 
     let mut structs_string = String::new();
     for item in structs {
-        let name = escape_name(&item.struct_name);
+        let name = escape_name_csharp(&item.struct_name, NameKind::Type, &options);
         let layout_kind = if item.is_union {
             "Explicit"
         } else {
@@ -209,6 +215,7 @@ pub fn emit_csharp(
             .push_str_ln(format!("    [StructLayout(LayoutKind.{layout_kind})]").as_str());
         structs_string
             .push_str_ln(format!("    {accessibility} unsafe partial struct {name}").as_str());
+
         structs_string.push_str_ln("    {");
         for field in &item.fields {
             if item.is_union {
@@ -221,6 +228,7 @@ pub fn emit_csharp(
                 true,
                 &"".to_string(),
                 &"".to_string(),
+                &mut forward_decls,
             );
             let attr = if type_name == "bool" {
                 "[MarshalAs(UnmanagedType.U1)] ".to_string()
@@ -233,7 +241,7 @@ pub fn emit_csharp(
                     "        {}public {} {}",
                     attr,
                     type_name,
-                    escape_name(field.name.as_str())
+                    escape_name_csharp(field.name.as_str(), NameKind::Field, &options)
                 )
                 .as_str(),
             );
@@ -274,13 +282,15 @@ pub fn emit_csharp(
             Some(x) => format!(" : {}", convert_token_enum_repr(x)),
             None => "".to_string(),
         };
-        let name = &item.enum_name;
+        let name = escape_name_csharp(&item.enum_name, NameKind::Type, options);
         if item.is_flags {
             enum_string.push_str_ln("    [Flags]");
         }
         enum_string.push_str_ln(format!("    {accessibility} enum {name}{repr}").as_str());
         enum_string.push_str_ln("    {");
         for (name, value) in &item.fields {
+            let name = escape_name_csharp(name, NameKind::EnumMember, options);
+
             let value = match value {
                 Some(x) => format!(" = {x},"),
                 None => ",".to_string(),
@@ -299,6 +309,7 @@ pub fn emit_csharp(
             false,
             &"".to_string(),
             &"".to_string(),
+            &mut forward_decls,
         );
 
         // special case for string, char, ByteStr
@@ -313,7 +324,7 @@ pub fn emit_csharp(
                 format!(
                     "        {} static ReadOnlySpan<byte> {} => new byte[] {};\n",
                     accessibility,
-                    escape_name(item.const_name.as_str()),
+                    escape_name_csharp(item.const_name.as_str(), NameKind::Const, &options),
                     item.value.replace("[", "{ ").replace("]", " }")
                 )
                 .as_str(),
@@ -330,7 +341,7 @@ pub fn emit_csharp(
                     "        {} const {} {} = {};\n",
                     accessibility,
                     type_name,
-                    escape_name(item.const_name.as_str()),
+                    escape_name_csharp(item.const_name.as_str(), NameKind::Const, &options),
                     value
                 )
                 .as_str(),
@@ -342,6 +353,8 @@ pub fn emit_csharp(
     for name in &options.csharp_imported_namespaces {
         imported_namespaces.push_str_ln(format!("using {name};").as_str());
     }
+
+    let forward_decls_string = forward_decls.drain().collect::<Vec<_>>().join("\n");
 
     let result = format!(
         "// <auto-generated>
@@ -367,6 +380,7 @@ namespace {namespace}
 
 {structs_string}
 {enum_string}
+{forward_decls_string}
 }}
     "
     );

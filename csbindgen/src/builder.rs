@@ -34,6 +34,8 @@ pub struct BindgenOptions {
     pub csharp_imported_namespaces: Vec<String>,
     pub csharp_generate_const_filter: fn(const_name: &str) -> bool,
     pub csharp_type_rename: fn(type_name: String) -> String,
+    pub csharp_method_rename: fn(type_name: String) -> String,
+    pub csharp_argument_rename: fn(type_name: String) -> String,
     pub csharp_file_header: String,
     pub csharp_file_footer: String,
     pub always_included_types: Vec<String>,

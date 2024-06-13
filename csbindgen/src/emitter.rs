@@ -115,7 +115,7 @@ pub fn emit_csharp(
         let mut method_name = &item.method_name;
         let method_name_temp: String;
         if method_prefix.is_empty() {
-            method_name_temp = escape_csharp_name(method_name);
+            method_name_temp = (options.csharp_method_rename)(escape_csharp_name(method_name));
             method_name = &method_name_temp;
         }
 
@@ -180,7 +180,7 @@ pub fn emit_csharp(
                     type_name = "[MarshalAs(UnmanagedType.U1)] bool".to_string();
                 }
 
-                format!("{} {}", type_name, escape_csharp_name(p.name.as_str()))
+                format!("{} {}", type_name, (options.csharp_argument_rename)(escape_csharp_name(p.name.as_str())))
             })
             .collect::<Vec<_>>()
             .join(", ");
